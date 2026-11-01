@@ -10,6 +10,7 @@
   let messageChannel = null;
   let loadingMessages = false;
   let authVersion = 0;
+  let creatingGroup = false;
 
   // ==========================================
   // NOTIFICATIONS
@@ -21,7 +22,7 @@
     if (box) {
       box.textContent = message;
       box.hidden = !message;
-    } else {
+    } else if (message) {
       alert(message);
     }
   }
@@ -38,48 +39,10 @@
     button.disabled = disabled;
   }
 
-  // ==========================================
-  // BUTTON HANDLERS
-  // ==========================================
-
-  $('google')?.addEventListener('click', () => {
-    void signInWithGoogle();
-  });
-
-  $('loginform')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    void signInWithEmail();
-  });
-
-  $('signup')?.addEventListener('click', () => {
-    void createAccount();
-  });
-
-  $('signout')?.addEventListener('click', () => {
-    void signOut();
-  });
-
-  $('create')?.addEventListener('click', () => {
-    alert('CREATE BUTTON CLICK DETECTED');
-    try {
-      createGroup();
-    } catch (error) {
-      alert('CREATE GROUP ERROR: ' + (error?.message || String(error)));
-      console.error(error);
-    }
-  });
-
-  $('refreshgroups')?.addEventListener('click', () => {
-    void loadGroups();
-  });
-
-  $('refresh')?.addEventListener('click', () => {
-    void loadMessages();
-  });
-
-  $('sendform')?.addEventListener('submit', (event) => {
-    void sendMessage(event);
-  });
+  function errorText(error) {
+    if (!error) return 'Unknown error';
+    return error.message || String(error);
+  }
 
   // ==========================================
   // INITIALIZE SUPABASE
@@ -88,42 +51,40 @@
   async function init() {
     try {
       if (!window.supabase) {
-        throw new Error(
-          'Supabase library did not load. Check your internet connection.'
-        );
+        throw new Error('Supabase library failed to load.');
       }
 
-      if (!window.CIRCLE_CONFIG) {
-        throw new Error(
-          'config.js did not load. Check that it is in the same folder.'
-        );
+      const config = window.CIRCLE_CONFIG;
+
+      if (!config) {
+        throw new Error('config.js did not load.');
       }
 
-      const url = window.CIRCLE_CONFIG.SUPABASE_URL;
-      const key = window.CIRCLE_CONFIG.SUPABASE_PUBLISHABLE_KEY;
+      const url = config.SUPABASE_URL;
+      const key = config.SUPABASE_PUBLISHABLE_KEY;
 
-      if (!url || !key ||
-          key === 'PASTE_YOUR_EXISTING_PUBLISHABLE_KEY_HERE') {
-        throw new Error('Check your Supabase settings in config.js.');
+      if (
+        !url ||
+        !key ||
+        key === 'PASTE_YOUR_EXISTING_PUBLISHABLE_KEY_HERE'
+      ) {
+        throw new Error('Check the Supabase URL and publishable key in config.js.');
       }
 
       db = window.supabase.createClient(url, key);
 
       const { data, error } = await db.auth.getSession();
-
       if (error) throw error;
 
       await updateUser(data.session?.user ?? null);
 
       db.auth.onAuthStateChange((_event, session) => {
-        setTimeout(() => {
-          void updateUser(session?.user ?? null);
-        }, 0);
+        void updateUser(session?.user ?? null);
       });
 
     } catch (error) {
-      console.error('Chatt initialization error:', error);
-      note('Startup error: ' + (error.message || String(error)));
+      console.error('Chatt startup error:', error);
+      note('Startup failed: ' + errorText(error));
     }
   }
 
@@ -135,19 +96,18 @@
     clearNote();
 
     if (!db) {
-      note('Chatt is not connected to Supabase. Check the startup error.');
+      note('Supabase is not initialized. Check the startup error.');
       return;
     }
 
     setButton('google', 'Connecting to Google...', true);
 
     try {
-      const redirectTo =
-        'https://dondavis644-del.github.io/Chatt/';
-
       const { data, error } = await db.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo }
+        options: {
+          redirectTo: 'https://dondavis644-del.github.io/Chatt/'
+        }
       });
 
       if (error) throw error;
@@ -155,13 +115,13 @@
       if (data?.url) {
         window.location.assign(data.url);
       } else {
-        note('No Google redirect URL was returned. Please try again.');
+        note('Google did not return a sign-in URL.');
         setButton('google', 'Continue with Google', false);
       }
 
     } catch (error) {
       console.error('Google sign-in error:', error);
-      note('Google sign-in failed: ' + (error.message || String(error)));
+      note('Google sign-in failed: ' + errorText(error));
       setButton('google', 'Continue with Google', false);
     }
   }
@@ -200,7 +160,7 @@
 
     } catch (error) {
       console.error('Email sign-in error:', error);
-      note('Sign-in failed: ' + (error.message || String(error)));
+      note('Sign-in failed: ' + errorText(error));
 
     } finally {
       setButton('signin', 'Sign in', false);
@@ -250,7 +210,7 @@
 
     } catch (error) {
       console.error('Account creation error:', error);
-      note('Account creation failed: ' + (error.message || String(error)));
+      note('Account creation failed: ' + errorText(error));
 
     } finally {
       setButton('signup', 'Create account', false);
@@ -267,29 +227,25 @@
 
     user = nextUser;
 
-    const signedIn = Boolean(user);
-
-    if ($('auth')) $('auth').hidden = signedIn;
-    if ($('workspace')) $('workspace').hidden = !signedIn;
-    if ($('signout')) $('signout').hidden = !signedIn;
+    if ($('auth')) $('auth').hidden = Boolean(user);
+    if ($('workspace')) $('workspace').hidden = !user;
+    if ($('signout')) $('signout').hidden = !user;
 
     if ($('who')) {
-      $('who').textContent = signedIn
-        ? (user.email || 'Signed in')
-        : '';
+      $('who').textContent = user ? (user.email || 'Signed in') : '';
     }
 
     if (changed) {
       currentChat = null;
       stopMessageChannel();
 
-      if ($('groups')) $('groups').replaceChildren();
-      if ($('messages')) $('messages').replaceChildren();
+      $('groups')?.replaceChildren();
+      $('messages')?.replaceChildren();
 
       if ($('title')) $('title').textContent = 'Select a group';
     }
 
-    if (signedIn) {
+    if (user) {
       await loadGroups();
     }
 
@@ -309,7 +265,7 @@
 
     } catch (error) {
       console.error('Sign-out error:', error);
-      note('Sign-out failed: ' + (error.message || String(error)));
+      note('Sign-out failed: ' + errorText(error));
     }
   }
 
@@ -333,11 +289,11 @@
 
       if (error) throw error;
 
-      list.replaceChildren();
-
       const chats = (data || [])
         .map((membership) => membership.chats)
         .filter(Boolean);
+
+      list.replaceChildren();
 
       if (!chats.length) {
         list.textContent = 'No groups yet. Create one!';
@@ -366,45 +322,46 @@
       console.error('Load groups error:', error);
 
       list.textContent = 'Could not load groups.';
-      note('Group loading failed: ' + (error.message || String(error)));
+      note('Group loading failed: ' + errorText(error));
     }
   }
 
   // ==========================================
-  // CREATE GROUP — UPDATED DIAGNOSTICS
+  // CREATE GROUP
   // ==========================================
 
   async function createGroup() {
+    if (creatingGroup) return;
+
     clearNote();
 
-    if (!db || !user) {
+    if (!db) {
+      note('Supabase is not initialized. Refresh the page and sign in again.');
+      return;
+    }
+
+    if (!user) {
       note('You are not signed in. Please sign in again.');
       return;
     }
 
-    const name = prompt('Enter a group name:', 'Test Group');
+    const name = window.prompt('Enter a group name:', 'My Group');
 
-    if (name === null) {
-      note('Group creation cancelled.');
-      return;
-    }
+    if (name === null) return;
 
     const cleanName = name.trim().slice(0, 60);
 
     if (!cleanName) {
-      note('Please enter a group name.');
+      note('Enter a group name before continuing.');
       return;
     }
 
+    creatingGroup = true;
     setButton('create', 'Creating group...', true);
-    note('Creating your group. Please wait...');
+    note('Creating your group...');
 
     try {
-      console.log('Creating group for user:', user.id);
-
-      alert('STEP 1: createGroup started');
-
-      alert('STEP 2: About to insert group into Supabase');
+      // Use the authenticated user's ID as the creator.
       const { data, error } = await db
         .from('chats')
         .insert({
@@ -415,7 +372,7 @@
         .single();
 
       if (error) {
-        console.error('Supabase group creation error:', {
+        console.error('Supabase create-group error:', {
           message: error.message,
           code: error.code,
           details: error.details,
@@ -424,17 +381,23 @@
 
         note(
           'GROUP CREATION FAILED\n' +
-          'Message: ' + error.message +
-          '\nCode: ' + (error.code || 'Not provided') +
-          '\nDetails: ' + (error.details || 'None')
+          'Message: ' + errorText(error) + '\n' +
+          'Code: ' + (error.code || 'Not supplied') + '\n' +
+          'Details: ' + (error.details || 'None') + '\n' +
+          'Hint: ' + (error.hint || 'None')
         );
 
         return;
       }
 
-      console.log('Group created:', data);
+      if (!data?.id) {
+        note('The database returned no group ID. Check the Supabase response.');
+        return;
+      }
 
-      note('Group created! Refreshing your group list...');
+      // The existing database trigger should add the creator
+      // to chat_members. Do not insert the membership a second time.
+      currentChat = data;
 
       await loadGroups();
       await selectChat(data);
@@ -442,14 +405,11 @@
       note('Group "' + data.name + '" created successfully.');
 
     } catch (error) {
-      console.error('Unexpected group creation error:', error);
-
-      note(
-        'UNEXPECTED ERROR\n' +
-        (error.message || String(error))
-      );
+      console.error('Unexpected create-group error:', error);
+      note('GROUP CREATION ERROR: ' + errorText(error));
 
     } finally {
+      creatingGroup = false;
       setButton('create', '+ Create group', false);
     }
   }
@@ -468,10 +428,7 @@
     }
 
     await loadGroups();
-
-    if (currentChat?.id === group.id) {
-      await loadMessages();
-    }
+    await loadMessages();
   }
 
   // ==========================================
@@ -482,10 +439,9 @@
     if (!db || !user || !currentChat || loadingMessages) return;
 
     loadingMessages = true;
+    const selectedChatId = currentChat.id;
 
     try {
-      const selectedChatId = currentChat.id;
-
       const { data, error } = await db
         .from('messages')
         .select('id,sender_id,content,created_at,expires_at')
@@ -493,7 +449,6 @@
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-
       if (currentChat?.id !== selectedChatId) return;
 
       const container = $('messages');
@@ -502,6 +457,7 @@
       container.replaceChildren();
 
       const now = Date.now();
+
       const visibleMessages = (data || []).filter((message) => {
         if (!message.expires_at) return true;
 
@@ -540,7 +496,7 @@
 
     } catch (error) {
       console.error('Load messages error:', error);
-      note('Could not load messages: ' + (error.message || String(error)));
+      note('Could not load messages: ' + errorText(error));
 
     } finally {
       loadingMessages = false;
@@ -594,12 +550,11 @@
       if (error) throw error;
 
       if (input) input.value = '';
-
       await loadMessages();
 
     } catch (error) {
       console.error('Send message error:', error);
-      note('Could not send message: ' + (error.message || String(error)));
+      note('Could not send message: ' + errorText(error));
 
     } finally {
       setButton('send', 'Send', false);
@@ -607,7 +562,7 @@
   }
 
   // ==========================================
-  // LIVE MESSAGE UPDATES
+  // REALTIME MESSAGE UPDATES
   // ==========================================
 
   function stopMessageChannel() {
@@ -620,7 +575,6 @@
 
   function startMessageChannel(chatId) {
     if (!db || !chatId || currentChat?.id !== chatId) return;
-
     if (messageChannel?._chattChatId === chatId) return;
 
     stopMessageChannel();
@@ -644,15 +598,57 @@
 
     messageChannel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR') {
-        console.error('Live message updates failed.');
+        console.error('Chatt realtime subscription failed.');
       }
     });
   }
 
   // ==========================================
-  // START CHATT
+  // BUTTON HANDLERS
   // ==========================================
 
-  void init();
+  $('google')?.addEventListener('click', () => {
+    void signInWithGoogle();
+  });
 
+  $('loginform')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void signInWithEmail();
+  });
+
+  $('signin')?.addEventListener('click', (event) => {
+    // Prevent a duplicate form submission if this button
+    // is also inside a form.
+    if ($('loginform')) return;
+    event.preventDefault();
+    void signInWithEmail();
+  });
+
+  $('signup')?.addEventListener('click', () => {
+    void createAccount();
+  });
+
+  $('signout')?.addEventListener('click', () => {
+    void signOut();
+  });
+
+  $('create')?.addEventListener('click', async (event) => {
+    event.preventDefault();
+    await createGroup();
+  });
+
+  $('refreshgroups')?.addEventListener('click', () => {
+    void loadGroups();
+  });
+
+  $('refresh')?.addEventListener('click', () => {
+    void loadMessages();
+  });
+
+  $('sendform')?.addEventListener('submit', (event) => {
+    void sendMessage(event);
+  });
+
+  // Start Chatt.
+  void init();
 })();
