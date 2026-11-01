@@ -261,11 +261,21 @@
       return;
     }
 
+    const { error: memberError } = await db.from('chat_members').insert({
+      chat_id: data.id,
+      user_id: user.id
+    });
+
+    if (memberError) {
+      note('Could not add you to the group: ' + memberError.message);
+      return;
+    }
+
     chat = null;
     await groups();
     await selectChat(data);
 
-    note('Group created. Inviting members is not implemented yet.');
+    note('Group created.');
   }
 
   async function sendMessage(event) {
