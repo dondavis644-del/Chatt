@@ -1,377 +1,663 @@
 
 (() => {
+  'use strict';
+
+  // ==========================================
+  // CHATT - APP.JS
+  // ==========================================
+
   const $ = (id) => document.getElementById(id);
 
   let db = null;
   let user = null;
   let chat = null;
-  let channel = null;
+  let messageSubscription = null;
+  let loadingMessages = false;
 
-  const cfg = window.CIRCLE_CONFIG || {};
+  // ==========================================
+  // NOTIFICATIONS
+  // ==========================================
 
   function note(message) {
-    const notice = $('notice');
+    const element = $('notice');
 
-    if (!notice) {
+    if (element) {
+      element.textContent = message;
+      element.hidden = false;
+    } else {
       alert(message);
-      return;
     }
-
-    notice.textContent = message;
-    notice.classList.add('show');
-
-    setTimeout(() => {
-      notice.classList.remove('show');
-    }, 4000);
   }
 
-  function setVisible(id, visible) {
-    const element = $(id);
-    if (element) element.hidden = !visible;
+  function clearNote() {
+    const element = $('notice');
+
+    if (element) {
+      element.textContent = '';
+      element.hidden = true;
+    }
   }
 
-  async function loggedIn(nextUser) {
-    user = nextUser || null;
+  // ==========================================
+  // INITIALIZE SUPABASE
+  // ==========================================
 
-    setVisible('auth', !user);
-    setVisible('user', !!user);
-
-    if ($('who')) {
-      $('who').textContent = user?.email || '';
-    }
-
-    if (!user) {
-      chat = null;
-
-      if (channel && db) {
-        await db.removeChannel(channel);
-        channel = null;
+  async function init() {
+    try {
+      if (!window.supabase) {
+        note('Supabase library failed to load. Refresh the page.');
+        return;
       }
 
-      if ($('messages')) $('messages').innerHTML = '';
-      if ($('groups')) $('groups').innerHTML = '';
+      if (!window.CIRCLE_CONFIG) {
+        note('config.js was not loaded.');
+        return;
+      }
 
-      if ($('title')) $('title').textContent = 'Your Chatt';
+      const { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } =
+        window.CIRCLE_CONFIG;
 
-      setVisible('sendform', false);
+      if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+        note('Check the Supabase settings in config.js.');
+        return;
+      }
+
+      db = window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_PUBLISHABLE_KEY
+      );
+
+      // Connect button handlers.
+      if ($('google')) {
+        $('google').addEventListener('click', signInWithGoogle);
+      }
+
+      if ($('signin')) {
+        $('signin').addEventListener('click', signInWithEmail);
+      }
+
+      if ($('signup')) {
+        $('signup').addEventListener('click', createAccount);
+      }
+
+      if ($('signout')) {
+        $('signout').addEventListener('click', signOut);
+      }
+
+      if ($('create')) {
+        $('create').addEventListener('click', createGroup);
+      }
+
+      if ($('refresh')) {
+        $('refresh').addEventListener('click', loadMessages);
+      }
+
+      if ($('sendform')) {
+        $('sendform').addEventListener('submit', sendMessage);
+      }
+
+      if ($('loginform')) {
+        $('loginform').addEventListener('submit', (event) => {
+          event.preventDefault();
+          void signInWithEmail();
+        });
+      }
+
+      // Check the existing login session.
+      const { data, error } = await db.auth.getSession();
+
+      if (error) {
+        console.error('Session error:', error);
+        note(error.message);
+        return;
+      }
+
+      await loggedIn(data.session?.user ?? null);
+
+      // Listen for login/logout changes.
+      db.auth.onAuthStateChange((_event, session) => {
+        setTimeout(() => {
+          void loggedIn(session?.user ?? null);
+        }, 0);
+      });
+
+    } catch (error) {
+      console.error('Chatt initialization failed:', error);
+      note('Chatt could not start: ' + error.message);
+    }
+  }
+
+  // ==========================================
+  // GOOGLE SIGN-IN
+  // ==========================================
+
+  async function signInWithGoogle() {
+    clearNote();
+
+    if (!db) {
+      note('Chatt is still loading. Refresh and try again.');
       return;
+    }
+
+    const button = $('google');
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Opening Google...';
+    }
+
+    try {
+      const redirectTo =
+        window.location.origin + window.location.pathname;
+
+      const { error } = await db.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectTo
+        }
+      });
+
+      if (error) {
+        console.error('Google sign-in error:', error);
+        note('Google sign-in failed: ' + error.message);
+
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Continue with Google';
+        }
+      }
+
+      // On success, Supabase redirects the browser to Google.
+    } catch (error) {
+      console.error('Google sign-in exception:', error);
+      note('Could not open Google: ' + error.message);
+
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Continue with Google';
+      }
+    }
+  }
+
+  // ==========================================
+  // EMAIL SIGN-IN
+  // ==========================================
+
+  async function signInWithEmail(event) {
+    if (event?.preventDefault) {
+      event.preventDefault();
+    }
+
+    clearNote();
+
+    if (!db) {
+      note('Chatt is still loading. Refresh the page.');
+      return;
+    }
+
+    const email = $('email')?.value.trim();
+    const password = $('password')?.value;
+
+    if (!email || !password) {
+      note('Enter your email and password.');
+      return;
+    }
+
+    try {
+      const { error } = await db.auth.signInWithPassword({
+        email,
+        password
+      });
+
+      if (error) {
+        console.error('Email sign-in error:', error);
+        note(error.message);
+        return;
+      }
+
+      note('Signed in successfully.');
+
+    } catch (error) {
+      console.error(error);
+      note('Sign-in failed: ' + error.message);
+    }
+  }
+
+  // ==========================================
+  // CREATE ACCOUNT
+  // ==========================================
+
+  async function createAccount(event) {
+    if (event?.preventDefault) {
+      event.preventDefault();
+    }
+
+    clearNote();
+
+    if (!db) {
+      note('Chatt is still loading. Refresh the page.');
+      return;
+    }
+
+    const email = $('email')?.value.trim();
+    const password = $('password')?.value;
+
+    if (!email || !password) {
+      note('Enter an email and password.');
+      return;
+    }
+
+    if (password.length < 6) {
+      note('Your password must contain at least 6 characters.');
+      return;
+    }
+
+    try {
+      const { data, error } = await db.auth.signUp({
+        email,
+        password
+      });
+
+      if (error) {
+        console.error('Account creation error:', error);
+        note(error.message);
+        return;
+      }
+
+      if (data.session) {
+        note('Your account has been created.');
+      } else {
+        note('Check your email to confirm your account.');
+      }
+
+    } catch (error) {
+      console.error(error);
+      note('Account creation failed: ' + error.message);
+    }
+  }
+
+  // ==========================================
+  // LOGIN / LOGOUT UI
+  // ==========================================
+
+  async function loggedIn(nextUser) {
+    const previousUserId = user?.id;
+    user = nextUser;
+
+    const isLoggedIn = Boolean(user);
+
+    if ($('auth')) {
+      $('auth').hidden = isLoggedIn;
+    }
+
+    if ($('user')) {
+      $('user').hidden = !isLoggedIn;
+    }
+
+    if ($('workspace')) {
+      $('workspace').hidden = !isLoggedIn;
+    }
+
+    if ($('who')) {
+      $('who').textContent = isLoggedIn
+        ? (user.email || 'Signed in')
+        : '';
+    }
+
+    if (!isLoggedIn) {
+      chat = null;
+      stopMessageSubscription();
+
+      if ($('groups')) $('groups').replaceChildren();
+      if ($('messages')) $('messages').replaceChildren();
+      if ($('title')) $('title').textContent = 'Select a group';
+
+      return;
+    }
+
+    if (previousUserId !== user.id) {
+      chat = null;
+      stopMessageSubscription();
+
+      if ($('messages')) $('messages').replaceChildren();
+      if ($('title')) $('title').textContent = 'Select a group';
     }
 
     await groups();
   }
 
-  async function groups() {
-    if (!user || !db) return;
+  async function signOut() {
+    if (!db) return;
 
-    const { data, error } = await db
-      .from('chat_members')
-      .select('chat_id,chats(id,name)')
-      .eq('user_id', user.id);
+    clearNote();
+
+    const { error } = await db.auth.signOut();
 
     if (error) {
-      note('Could not load groups: ' + error.message);
+      console.error('Sign-out error:', error);
+      note(error.message);
       return;
     }
+
+    chat = null;
+    note('You have signed out.');
+  }
+
+  // ==========================================
+  // LOAD GROUPS
+  // ==========================================
+
+  async function groups() {
+    if (!db || !user) return;
 
     const container = $('groups');
 
     if (!container) return;
 
-    container.innerHTML = '';
+    container.textContent = 'Loading groups...';
 
-    (data || []).forEach((row) => {
-      if (!row.chats) return;
+    try {
+      const { data, error } = await db
+        .from('chat_members')
+        .select('chat_id,chats(id,name)')
+        .eq('user_id', user.id);
 
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'alt';
-      button.textContent = row.chats.name;
-      button.onclick = () => selectChat(row.chats);
+      if (error) {
+        console.error('Group loading error:', error);
+        container.textContent = 'Could not load groups.';
+        note('Could not load groups: ' + error.message);
+        return;
+      }
 
-      container.appendChild(button);
-    });
+      container.replaceChildren();
 
-    if (!chat && data?.[0]?.chats) {
-      await selectChat(data[0].chats);
+      const memberships = data || [];
+      const availableGroups = memberships
+        .map((item) => item.chats)
+        .filter(Boolean);
+
+      if (availableGroups.length === 0) {
+        container.textContent = 'No groups yet. Create one!';
+        return;
+      }
+
+      availableGroups.forEach((group) => {
+        const button = document.createElement('button');
+
+        button.type = 'button';
+        button.textContent = group.name || 'Unnamed group';
+        button.className = 'group-button';
+
+        if (chat?.id === group.id) {
+          button.classList.add('active');
+        }
+
+        button.addEventListener('click', () => {
+          void selectChat(group);
+        });
+
+        container.appendChild(button);
+      });
+
+    } catch (error) {
+      console.error('Group loading exception:', error);
+      container.textContent = 'Could not load groups.';
+      note(error.message);
     }
   }
 
-  async function selectChat(selectedChat) {
-    chat = selectedChat;
+  // ==========================================
+  // CREATE GROUP
+  // ==========================================
 
-    $('title').textContent = selectedChat.name;
-    setVisible('sendform', true);
+  async function createGroup() {
+    clearNote();
 
-    if (channel) {
-      await db.removeChannel(channel);
-      channel = null;
+    if (!db || !user) {
+      note('Sign in before creating a group.');
+      return;
     }
 
-    await loadMessages();
+    const name = prompt('Enter a group name:', 'Chatt Group');
 
-    channel = db
-      .channel('chat-' + selectedChat.id)
+    if (name === null || !name.trim()) return;
+
+    try {
+      const { data, error } = await db
+        .from('chats')
+        .insert({
+          name: name.trim().slice(0, 60),
+          created_by: user.id
+        })
+        .select('id,name')
+        .single();
+
+      if (error) {
+        console.error('Group creation failed:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          userId: user.id
+        });
+
+        note('Could not create group: ' + error.message);
+        return;
+      }
+
+      // The database trigger should add the creator
+      // to chat_members. Do not insert them twice here.
+      await groups();
+      await selectChat(data);
+
+      note('Group created successfully.');
+
+    } catch (error) {
+      console.error('Group creation exception:', error);
+      note('Could not create group: ' + error.message);
+    }
+  }
+
+  // ==========================================
+  // OPEN A GROUP
+  // ==========================================
+
+  async function selectChat(group) {
+    if (!group || !group.id) return;
+
+    chat = group;
+
+    if ($('title')) {
+      $('title').textContent = group.name || 'Chat';
+    }
+
+    await groups();
+    await loadMessages();
+  }
+
+  // ==========================================
+  // LOAD MESSAGES
+  // ==========================================
+
+  async function loadMessages() {
+    if (!db || !user || !chat || loadingMessages) return;
+
+    loadingMessages = true;
+
+    try {
+      const { data, error } = await db
+        .from('messages')
+        .select('id,sender_id,content,created_at,expires_at')
+        .eq('chat_id', chat.id)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Message loading error:', error);
+        note('Could not load messages: ' + error.message);
+        return;
+      }
+
+      const container = $('messages');
+
+      if (!container) return;
+
+      container.replaceChildren();
+
+      const now = Date.now();
+
+      (data || []).forEach((message) => {
+        // Do not display messages that have expired.
+        if (
+          message.expires_at &&
+          new Date(message.expires_at).getTime() <= now
+        ) {
+          return;
+        }
+
+        const item = document.createElement('div');
+        item.className = 'message';
+
+        const sender = document.createElement('strong');
+        sender.textContent =
+          message.sender_id === user.id ? 'You' : 'Member';
+
+        const content = document.createElement('p');
+        content.textContent = message.content || '';
+
+        const timestamp = document.createElement('small');
+        timestamp.textContent = message.created_at
+          ? new Date(message.created_at).toLocaleString()
+          : '';
+
+        item.append(sender, content, timestamp);
+        container.appendChild(item);
+      });
+
+      container.scrollTop = container.scrollHeight;
+
+      startMessageSubscription();
+
+    } catch (error) {
+      console.error('Message loading exception:', error);
+      note('Could not load messages: ' + error.message);
+
+    } finally {
+      loadingMessages = false;
+    }
+  }
+
+  // ==========================================
+  // SEND MESSAGE
+  // ==========================================
+
+  async function sendMessage(event) {
+    event.preventDefault();
+    clearNote();
+
+    if (!db || !user || !chat) {
+      note('Select a group before sending a message.');
+      return;
+    }
+
+    const input = $('message');
+    const content = input?.value.trim();
+
+    if (!content) return;
+
+    const sendButton = $('sendform')?.querySelector(
+      'button[type="submit"], button:not([type])'
+    );
+
+    if (sendButton) sendButton.disabled = true;
+
+    try {
+      const expiryValue = $('expiry')?.value;
+      let expiresAt = null;
+
+      // Expiry is measured in hours.
+      if (expiryValue && expiryValue !== 'never') {
+        const hours = Number(expiryValue);
+
+        if (Number.isFinite(hours) && hours > 0) {
+          expiresAt = new Date(
+            Date.now() + hours * 60 * 60 * 1000
+          ).toISOString();
+        }
+      }
+
+      const { error } = await db
+        .from('messages')
+        .insert({
+          chat_id: chat.id,
+          sender_id: user.id,
+          content,
+          message_type: 'text',
+          expires_at: expiresAt
+        });
+
+      if (error) {
+        console.error('Message sending error:', error);
+        note('Could not send message: ' + error.message);
+        return;
+      }
+
+      if (input) input.value = '';
+
+      await loadMessages();
+
+    } catch (error) {
+      console.error('Message sending exception:', error);
+      note('Could not send message: ' + error.message);
+
+    } finally {
+      if (sendButton) sendButton.disabled = false;
+    }
+  }
+
+  // ==========================================
+  // LIVE MESSAGE UPDATES
+  // ==========================================
+
+  function stopMessageSubscription() {
+    if (messageSubscription && db) {
+      db.removeChannel(messageSubscription);
+    }
+
+    messageSubscription = null;
+  }
+
+  function startMessageSubscription() {
+    if (!db || !chat) return;
+
+    stopMessageSubscription();
+
+    const currentChatId = chat.id;
+
+    messageSubscription = db
+      .channel('chat-messages-' + currentChatId)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'messages',
-          filter: 'chat_id=eq.' + selectedChat.id
+          filter: 'chat_id=eq.' + currentChatId
         },
-        () => loadMessages()
+        () => {
+          void loadMessages();
+        }
       )
       .subscribe((status) => {
         if (status === 'CHANNEL_ERROR') {
-          note('Live updates failed. Try refreshing messages.');
+          console.error('Live message subscription failed.');
         }
       });
   }
 
-  async function loadMessages() {
-    if (!chat || !user || !db) return;
-
-    const { data, error } = await db
-      .from('messages')
-      .select('id,sender_id,content,created_at,expires_at')
-      .eq('chat_id', chat.id)
-      .order('created_at', { ascending: true })
-      .limit(200);
-
-    if (error) {
-      note('Could not load messages: ' + error.message);
-      return;
-    }
-
-    const area = $('messages');
-
-    if (!area) return;
-
-    area.innerHTML = '';
-
-    (data || [])
-      .filter((message) => {
-        return (
-          !message.expires_at ||
-          new Date(message.expires_at) > new Date()
-        );
-      })
-      .forEach((message) => {
-        const article = document.createElement('article');
-
-        article.className =
-          'msg' + (message.sender_id === user.id ? ' mine' : '');
-
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-
-        meta.textContent =
-          (message.sender_id === user.id
-            ? 'You'
-            : message.sender_id.slice(0, 8)) +
-          ' · ' +
-          new Date(message.created_at).toLocaleString();
-
-        const body = document.createElement('div');
-        body.className = 'body';
-        body.textContent = message.content;
-
-        article.append(meta, body);
-        area.appendChild(article);
-      });
-
-    area.scrollTop = area.scrollHeight;
-  }
-
-  async function signInWithEmail() {
-    if (!db) return note('Please wait for Chatt to load.');
-
-    const email = $('email').value.trim();
-    const password = $('password').value;
-
-    if (!email || !password) {
-      return note('Enter your email and password.');
-    }
-
-    const { error } = await db.auth.signInWithPassword({
-      email,
-      password
-    });
-
-    if (error) note(error.message);
-  }
-
-  async function createAccount() {
-    if (!db) return note('Please wait for Chatt to load.');
-
-    const email = $('email').value.trim();
-    const password = $('password').value;
-
-    if (!email || !password) {
-      return note('Enter your email and password.');
-    }
-
-    if (password.length < 6) {
-      return note('Use a password with at least 6 characters.');
-    }
-
-    const { data, error } = await db.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo:
-          window.location.origin + window.location.pathname
-      }
-    });
-
-    if (error) {
-      note(error.message);
-    } else if (data.session) {
-      note('Account created successfully!');
-    } else {
-      note('Account created. Check your email if confirmation is enabled.');
-    }
-  }
-
-  async function signInWithGoogle() {
-    if (!db) return note('Please wait for Chatt to load.');
-
-    const { error } = await db.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo:
-          window.location.origin + window.location.pathname
-      }
-    });
-
-    if (error) note('Google sign-in failed: ' + error.message);
-  }
-
-  async function createGroup() {
-    if (!user || !db) {
-      return note('Sign in before creating a group.');
-    }
-
-    const name = prompt('Enter a group name', 'Chatt Group');
-
-    if (!name || !name.trim()) return;
-
-    const { data, error } = await db
-      .from('chats')
-      .insert({
-        name: name.trim().slice(0, 60),
-        created_by: user.id
-      })
-      .select('id,name')
-      .single();
-
-    if (error) {
-  console.error('Group creation failed:', {
-    message: error.message,
-    code: error.code,
-    details: error.details,
-    userId: user?.id
-  });
-
-  note('Could not create group: ' + error.message);
-  return;
-}
-    }
-
-    // The Supabase trigger adds the creator to chat_members.
-    chat = null;
-
-    await groups();
-    await selectChat(data);
-
-    note('Group created.');
-  }
-
-  async function sendMessage(event) {
-    event.preventDefault();
-
-    if (!user || !chat || !db) {
-      return note('Sign in and select a group first.');
-    }
-
-    const text = $('message').value.trim();
-
-    if (!text) return;
-
-    const seconds = Number($('expiry').value);
-
-    const expiresAt = seconds
-      ? new Date(Date.now() + seconds * 1000).toISOString()
-      : null;
-
-    const { error } = await db.from('messages').insert({
-      chat_id: chat.id,
-      sender_id: user.id,
-      content: text,
-      message_type: 'text',
-      expires_at: expiresAt
-    });
-
-    if (error) {
-      note('Could not send message: ' + error.message);
-    } else {
-      $('message').value = '';
-      await loadMessages();
-    }
-  }
-
-  async function init() {
-    if (
-      !cfg.SUPABASE_URL ||
-      !cfg.SUPABASE_PUBLISHABLE_KEY ||
-      cfg.SUPABASE_URL.includes('PASTE_') ||
-      cfg.SUPABASE_PUBLISHABLE_KEY.includes('PASTE_')
-    ) {
-      note('Add your Supabase URL and publishable key in config.js.');
-      return;
-    }
-
-    if (!window.supabase) {
-      note('Could not load Supabase. Refresh the page and try again.');
-      return;
-    }
-
-    db = window.supabase.createClient(
-      cfg.SUPABASE_URL,
-      cfg.SUPABASE_PUBLISHABLE_KEY
-    );
-
-    const { data, error } = await db.auth.getSession();
-
-    if (error) {
-      note(error.message);
-      return;
-    }
-
-    await loggedIn(data.session?.user || null);
-
-    db.auth.onAuthStateChange((_event, session) => {
-      void loggedIn(session?.user || null);
-    });
-  }
-
-  $('google').onclick = signInWithGoogle;
-  $('signin').onclick = signInWithEmail;
-  $('signup').onclick = createAccount;
-
-  $('signout').onclick = async () => {
-    const { error } = await db.auth.signOut();
-    if (error) note(error.message);
-  };
-
-  $('create').onclick = createGroup;
-  $('refresh').onclick = loadMessages;
-  $('sendform').onsubmit = sendMessage;
-
-  $('loginform').addEventListener('submit', (event) => {
-    event.preventDefault();
-    void signInWithEmail();
-  });
+  // ==========================================
+  // START CHATT
+  // ==========================================
 
   void init();
+
 })();
