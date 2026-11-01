@@ -11,6 +11,7 @@
 
   function note(message) {
     const notice = $('notice');
+
     if (!notice) {
       alert(message);
       return;
@@ -51,6 +52,7 @@
       if ($('groups')) $('groups').innerHTML = '';
 
       if ($('title')) $('title').textContent = 'Your Chatt';
+
       setVisible('sendform', false);
       return;
     }
@@ -62,13 +64,7 @@
     if (!user || !db) return;
 
     const { data, error } = await db
-  .from('chats')
-  .insert({
-    name: name.trim().slice(0, 60),
-    created_by: user.id
-  })
-  .select('id,name')
-  .single();
+      .from('chat_members')
       .select('chat_id,chats(id,name)')
       .eq('user_id', user.id);
 
@@ -78,6 +74,9 @@
     }
 
     const container = $('groups');
+
+    if (!container) return;
+
     container.innerHTML = '';
 
     (data || []).forEach((row) => {
@@ -145,6 +144,9 @@
     }
 
     const area = $('messages');
+
+    if (!area) return;
+
     area.innerHTML = '';
 
     (data || [])
@@ -156,6 +158,7 @@
       })
       .forEach((message) => {
         const article = document.createElement('article');
+
         article.className =
           'msg' + (message.sender_id === user.id ? ' mine' : '');
 
@@ -267,17 +270,9 @@
       return;
     }
 
-    const { error: memberError } = await db.from('chat_members').insert({
-      chat_id: data.id,
-      user_id: user.id
-    });
-
-    if (memberError) {
-      note('Could not add you to the group: ' + memberError.message);
-      return;
-    }
-
+    // The Supabase trigger adds the creator to chat_members.
     chat = null;
+
     await groups();
     await selectChat(data);
 
@@ -355,10 +350,12 @@
   $('google').onclick = signInWithGoogle;
   $('signin').onclick = signInWithEmail;
   $('signup').onclick = createAccount;
+
   $('signout').onclick = async () => {
     const { error } = await db.auth.signOut();
     if (error) note(error.message);
   };
+
   $('create').onclick = createGroup;
   $('refresh').onclick = loadMessages;
   $('sendform').onsubmit = sendMessage;
