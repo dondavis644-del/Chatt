@@ -62,7 +62,13 @@
     if (!user || !db) return;
 
     const { data, error } = await db
-      .from('chat_members')
+  .from('chats')
+  .insert({
+    name: name.trim().slice(0, 60),
+    created_by: user.id
+  })
+  .select('id,name')
+  .single();
       .select('chat_id,chats(id,name)')
       .eq('user_id', user.id);
 
