@@ -266,8 +266,16 @@
       .single();
 
     if (error) {
-      note('Could not create group: ' + error.message);
-      return;
+  console.error('Group creation failed:', {
+    message: error.message,
+    code: error.code,
+    details: error.details,
+    userId: user?.id
+  });
+
+  note('Could not create group: ' + error.message);
+  return;
+}
     }
 
     // The Supabase trigger adds the creator to chat_members.
