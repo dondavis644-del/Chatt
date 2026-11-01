@@ -60,7 +60,13 @@
   });
 
   $('create')?.addEventListener('click', () => {
-    void createGroup();
+    alert('CREATE BUTTON CLICK DETECTED');
+    try {
+      createGroup();
+    } catch (error) {
+      alert('CREATE GROUP ERROR: ' + (error?.message || String(error)));
+      console.error(error);
+    }
   });
 
   $('refreshgroups')?.addEventListener('click', () => {
