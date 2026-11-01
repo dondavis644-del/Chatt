@@ -402,6 +402,9 @@
     try {
       console.log('Creating group for user:', user.id);
 
+      alert('STEP 1: createGroup started');
+
+      alert('STEP 2: About to insert group into Supabase');
       const { data, error } = await db
         .from('chats')
         .insert({
