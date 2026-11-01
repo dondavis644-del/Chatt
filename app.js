@@ -362,33 +362,42 @@
 
     try {
       // Use the authenticated user's ID as the creator.
-      const { data, error } = await db
-        .from('chats')
-        .insert({
-          name: cleanName,
-          created_by: user.id
-        })
-        .select('id,name')
-        .single();
+      let result;
+
+      try {
+        result = await db
+          .from('chats')
+          .insert({
+            name: cleanName,
+            created_by: user.id
+          })
+          .select('id,name')
+          .single();
+      } catch (err) {
+        alert(
+          'SUPABASE REQUEST REJECTED\n' +
+          (err?.message || String(err))
+        );
+        console.error(err);
+        return;
+      }
+
+      const { data, error } = result;
 
       if (error) {
-        console.error('Supabase create-group error:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-
-        note(
-          'GROUP CREATION FAILED\n' +
-          'Message: ' + errorText(error) + '\n' +
-          'Code: ' + (error.code || 'Not supplied') + '\n' +
+        alert(
+          'GROUP INSERT FAILED\n' +
+          'Message: ' + (error.message || 'None') + '\n' +
+          'Code: ' + (error.code || 'None') + '\n' +
           'Details: ' + (error.details || 'None') + '\n' +
           'Hint: ' + (error.hint || 'None')
         );
 
+        console.error('Supabase insert error:', error);
         return;
       }
+
+      alert('GROUP INSERT SUCCEEDED\n' + JSON.stringify(data));
 
       if (!data?.id) {
         note('The database returned no group ID. Check the Supabase response.');
