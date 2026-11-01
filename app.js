@@ -68,12 +68,15 @@
         !key ||
         key === 'PASTE_YOUR_EXISTING_PUBLISHABLE_KEY_HERE'
       ) {
-        throw new Error('Check the Supabase URL and publishable key in config.js.');
+        throw new Error(
+          'Check the Supabase URL and publishable key in config.js.'
+        );
       }
 
       db = window.supabase.createClient(url, key);
 
       const { data, error } = await db.auth.getSession();
+
       if (error) throw error;
 
       await updateUser(data.session?.user ?? null);
@@ -232,7 +235,9 @@
     if ($('signout')) $('signout').hidden = !user;
 
     if ($('who')) {
-      $('who').textContent = user ? (user.email || 'Signed in') : '';
+      $('who').textContent = user
+        ? (user.email || 'Signed in')
+        : '';
     }
 
     if (changed) {
@@ -242,7 +247,9 @@
       $('groups')?.replaceChildren();
       $('messages')?.replaceChildren();
 
-      if ($('title')) $('title').textContent = 'Select a group';
+      if ($('title')) {
+        $('title').textContent = 'Select a group';
+      }
     }
 
     if (user) {
@@ -259,6 +266,7 @@
 
     try {
       const { error } = await db.auth.signOut();
+
       if (error) throw error;
 
       note('Signed out successfully.');
@@ -336,7 +344,7 @@
     clearNote();
 
     if (!db) {
-      note('Supabase is not initialized. Refresh the page and sign in again.');
+      note('Supabase is not initialized. Refresh and sign in again.');
       return;
     }
 
@@ -345,7 +353,10 @@
       return;
     }
 
-    const name = window.prompt('Enter a group name:', 'My Group');
+    const name = window.prompt(
+      'Enter a group name:',
+      'My Group'
+    );
 
     if (name === null) return;
 
@@ -361,30 +372,53 @@
     note('Creating your group...');
 
     try {
-      // Use the authenticated user's ID as the creator.
+      alert('STEP 1: createGroup started');
+
+      // Check the current user before inserting.
+      console.log('Creating group for user:', user.id);
+      alert('STEP 2: About to insert group into Supabase');
+
+      // Keep the insert in a separate function so the
+      // returned error can be displayed clearly.
+      const insertPromise = db
+        .from('chats')
+        .insert({
+          name: cleanName,
+          created_by: user.id
+        })
+        .select('id,name')
+        .single();
+
+      // Report if the request is taking unusually long.
+      let timeoutId;
+
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new Error(
+              'Supabase request timed out after 15 seconds. ' +
+              'Check your connection and Supabase project.'
+            )
+          );
+        }, 15000);
+      });
+
       let result;
 
       try {
-        result = await db
-          .from('chats')
-          .insert({
-            name: cleanName,
-            created_by: user.id
-          })
-          .select('id,name')
-          .single();
-      } catch (err) {
-        alert(
-          'SUPABASE REQUEST REJECTED\n' +
-          (err?.message || String(err))
-        );
-        console.error(err);
-        return;
+        result = await Promise.race([
+          insertPromise,
+          timeoutPromise
+        ]);
+      } finally {
+        clearTimeout(timeoutId);
       }
 
       const { data, error } = result;
 
       if (error) {
+        console.error('Supabase insert error:', error);
+
         alert(
           'GROUP INSERT FAILED\n' +
           'Message: ' + (error.message || 'None') + '\n' +
@@ -393,19 +427,22 @@
           'Hint: ' + (error.hint || 'None')
         );
 
-        console.error('Supabase insert error:', error);
+        note('Group creation failed: ' + errorText(error));
         return;
       }
 
-      alert('GROUP INSERT SUCCEEDED\n' + JSON.stringify(data));
+      alert(
+        'GROUP INSERT SUCCEEDED\n' +
+        JSON.stringify(data)
+      );
 
       if (!data?.id) {
-        note('The database returned no group ID. Check the Supabase response.');
+        note('The database returned no group ID.');
         return;
       }
 
       // The existing database trigger should add the creator
-      // to chat_members. Do not insert the membership a second time.
+      // to chat_members. Do not insert membership twice.
       currentChat = data;
 
       await loadGroups();
@@ -414,8 +451,14 @@
       note('Group "' + data.name + '" created successfully.');
 
     } catch (error) {
-      console.error('Unexpected create-group error:', error);
-      note('GROUP CREATION ERROR: ' + errorText(error));
+      console.error('Create-group diagnostic error:', error);
+
+      alert(
+        'CREATE GROUP ERROR\n' +
+        (error?.message || String(error))
+      );
+
+      note('Group creation error: ' + errorText(error));
 
     } finally {
       creatingGroup = false;
@@ -458,6 +501,7 @@
         .order('created_at', { ascending: true });
 
       if (error) throw error;
+
       if (currentChat?.id !== selectedChatId) return;
 
       const container = $('messages');
@@ -471,12 +515,15 @@
         if (!message.expires_at) return true;
 
         const expiry = new Date(message.expires_at).getTime();
+
         return !Number.isFinite(expiry) || expiry > now;
       });
 
       if (!visibleMessages.length) {
         const empty = document.createElement('p');
+
         empty.textContent = 'No messages yet. Start the conversation!';
+
         container.appendChild(empty);
       }
 
@@ -485,13 +532,17 @@
         item.className = 'message';
 
         const sender = document.createElement('strong');
+
         sender.textContent =
-          message.sender_id === user.id ? 'You' : 'Member';
+          message.sender_id === user.id
+            ? 'You'
+            : 'Member';
 
         const content = document.createElement('p');
         content.textContent = message.content || '';
 
         const time = document.createElement('small');
+
         time.textContent = message.created_at
           ? new Date(message.created_at).toLocaleString()
           : '';
@@ -505,6 +556,7 @@
 
     } catch (error) {
       console.error('Load messages error:', error);
+
       note('Could not load messages: ' + errorText(error));
 
     } finally {
@@ -559,10 +611,12 @@
       if (error) throw error;
 
       if (input) input.value = '';
+
       await loadMessages();
 
     } catch (error) {
       console.error('Send message error:', error);
+
       note('Could not send message: ' + errorText(error));
 
     } finally {
@@ -584,6 +638,7 @@
 
   function startMessageChannel(chatId) {
     if (!db || !chatId || currentChat?.id !== chatId) return;
+
     if (messageChannel?._chattChatId === chatId) return;
 
     stopMessageChannel();
@@ -626,9 +681,8 @@
   });
 
   $('signin')?.addEventListener('click', (event) => {
-    // Prevent a duplicate form submission if this button
-    // is also inside a form.
     if ($('loginform')) return;
+
     event.preventDefault();
     void signInWithEmail();
   });
@@ -641,9 +695,24 @@
     void signOut();
   });
 
-  $('create')?.addEventListener('click', async (event) => {
+  // Updated diagnostic click handler.
+  $('create')?.addEventListener('click', (event) => {
     event.preventDefault();
-    await createGroup();
+
+    alert('CLICK HANDLER WORKS');
+
+    createGroup()
+      .then(() => {
+        alert('CREATE GROUP FUNCTION FINISHED');
+      })
+      .catch((error) => {
+        alert(
+          'CREATE GROUP ERROR: ' +
+          (error?.message || String(error))
+        );
+
+        console.error(error);
+      });
   });
 
   $('refreshgroups')?.addEventListener('click', () => {
